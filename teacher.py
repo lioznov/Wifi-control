@@ -34,50 +34,80 @@ def check_student_events():
     app.after(100, check_student_events)
 
 
-def wait_for_student():
-    server_socket = sc.socket(sc.AF_INET, sc.SOCK_STREAM)
-    server_socket.bind(("127.0.0.1", 50505))
-    server_socket.listen()
+def handle_student(connection, address):
+    print("Подключился компьютер:", address)
 
-    print("Сервер ожидает подключения...")
+    try:
+        connection.settimeout(10)
+        with connection.makefile("rb") as incoming:
+            while True:
+                message_bytes = incoming.readline(1024)
 
-    while True:
-        connection, address = server_socket.accept()
-        print("Подключился компьютер:", address)
+                if not message_bytes:
+                    print("Ученик отключился:",address)
+                    break
 
-        try:
-            connection.settimeout(10)
+                if len(message_bytes) > 65536:
+                    print("ообщение слишком большое:",address)
+                    break
 
-            with connection.makefile("rb") as incoming:
-                while True:
-                    message_bytes = incoming.readline(65537)
+                if not message_bytes.endswith(b"\n"):
+                    print("Сообщение получено не полностью:",address)
+                    break
 
-                    if not message_bytes:
-                        print("Ученик отключился:", address)
-                        break
+                message = message_bytes.decode("utf-8")
+                data = json.loads(message)
 
-                    if len(message_bytes) > 65536 or not message_bytes.endswith(b"\n"):
-                        print("Сообщение слишком большое или получено не полностью")
-                        break
+                if not isinstance(data,dict):
+                    print("Получен неверный формат данных:",address)
+                    break
 
-                    message = message_bytes.decode("utf-8")
-                    data = json.loads(message)
+                computer_name = data.get("computer_name")
+                window_titles = data.get("windows")
 
-                    computer_name = data["computer_name"]
-                    window_titles = data["windows"]
+                if not isinstance(computer_name,str):
+                    print("Не получено имя компьютера:",address)
+                    break
 
-                    student_events.put((address, computer_name, window_titles))
+                if not isinstance(window_titles,list):
+                    print("не получен списко окон:",address)
+                    break
 
-                    reply = "Список получен\n"
-                    connection.sendall(reply.encode("utf-8"))
+                if not all(isinstance(title,str) for title in window_titles):
+                    print("Список окон содержит неверные данные:",address)
+                    break
 
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError) as error:
-            print("Ошибка при обмене с учеником:", error)
+                student_events.put((address, computer_name, window_titles))
+                reply = "Список получен\n"
+                connection.sendall(reply.encode("utf-8"))
 
-        finally:
-            connection.close()
+    except (OSError,UnicodeDecodeError,json.JSONDecodeError) as error:
+        print("Ошибка при обмене с учеником:",address,error)
+    finally:
+        connection.close()
+        print("Соединение закрыто:",address)
 
-        print("Сервер снова ожидает подключения...")
+
+def wait_for_students():
+    try:
+        with sc.socket(sc.AF_INET,sc.SOCK_STREAM) as server_socket:
+            server_socket.bind(("127.0.0.1",50505))
+            server_socket.listen()
+            print("Сервер ожидает подключения...")
+
+            while True:
+                connection, address = server_socket.accept()
+                student_thread = threading.Thread(
+                    target=handle_student,
+                    args=(connection,address),
+                    daemon=True
+                )
+
+                student_thread.start()
+
+    except  OSError as error:
+        print("Ошибка сервера:",error)
+
 
 def start_server():
     access_code = code_entry.get()
@@ -88,7 +118,7 @@ def start_server():
         status_label.configure(text="Код должен содержать не менее 12 символов")
     else:
         server_thread = threading.Thread(
-            target = wait_for_student,
+            target = wait_for_students,
             daemon=True
         )
         server_thread.start()
