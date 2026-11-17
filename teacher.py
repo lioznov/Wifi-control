@@ -42,7 +42,7 @@ def handle_student(connection, address):
         connection.settimeout(10)
         with connection.makefile("rb") as incoming:
             while True:
-                message_bytes = incoming.readline(1024)
+                message_bytes = incoming.readline(65537)
 
                 if not message_bytes:
                     print("Ученик отключился:",address)
@@ -148,7 +148,7 @@ def check_presence_events():
             for ip_address,port in sorted(connected_students):
                 connected_box.insert("end",f"{ip_address}:{port}\n")
 
-    app.after(100,check_student_events)
+    app.after(100,check_presence_events)
 
 
 
@@ -227,5 +227,5 @@ start_button = ctk.CTkButton(
 start_button.pack(pady=10)
 
 app.after(100, check_student_events)
-app.after(100,check_presence_events())
+app.after(100,check_presence_events)
 app.mainloop()
