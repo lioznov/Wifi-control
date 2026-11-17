@@ -5,11 +5,11 @@ import json
 
 import customtkinter as ctk
 
-
 ctk.set_appearance_mode("dark")
 
 student_events = queue.Queue()
-
+presence_events = queue.Queue()
+connected_students = set()
 
 def check_student_events():
     try:
@@ -36,6 +36,7 @@ def check_student_events():
 
 def handle_student(connection, address):
     print("Подключился компьютер:", address)
+    presence_events.put(("connected",address))
 
     try:
         connection.settimeout(10)
@@ -85,6 +86,7 @@ def handle_student(connection, address):
         print("Ошибка при обмене с учеником:",address,error)
     finally:
         connection.close()
+        presence_events.put(("disconnected",address))
         print("Соединение закрыто:",address)
 
 
@@ -127,11 +129,34 @@ def start_server():
         start_button.configure(state="disabled")
 
 
+def check_presence_events():
+    try:
+        event_type, address = presence_events.get_nowait()
+    except queue.Empty:
+        pass
+    else:
+        if event_type == "connected":
+            connected_students.add(address)
+        elif event_type == "disconnected":
+            connected_students.discard(address)
+        connected_box.delete("1.0","end")
+
+        if not connected_students:
+            connected_box.insert("end","Нет подключенных устройств")
+
+        else:
+            for ip_address,port in sorted(connected_students):
+                connected_box.insert("end",f"{ip_address}:{port}\n")
+
+    app.after(100,check_student_events)
+
+
+
 app = ctk.CTk()
 
 
 app.title("Панель преподователя")
-app.geometry("500x500")
+app.geometry("700x700")
 
 
 title_label = ctk.CTkLabel(
@@ -152,6 +177,23 @@ student_label = ctk.CTkLabel(
     text="Подключений еще не было"
 )
 student_label.pack(pady=10)
+
+
+connected_label = ctk.CTkLabel(
+    master=app,
+    text="Активные подключения"
+)
+connected_label.pack(pady=(10,5))
+
+
+connected_box = ctk.CTkTextbox(
+    master=app,
+    width=400,
+    height=80
+)
+connected_box.pack(pady=5)
+
+connected_box.insert("end","Нет подключенных устройств\n")
 
 
 history_label = ctk.CTkLabel(
@@ -185,5 +227,5 @@ start_button = ctk.CTkButton(
 start_button.pack(pady=10)
 
 app.after(100, check_student_events)
-
+app.after(100,check_presence_events())
 app.mainloop()
