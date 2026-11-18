@@ -12,43 +12,80 @@ student_events = queue.Queue()
 presence_events = queue.Queue()
 connected_students = set()
 students_names = {}
+selected_student = None
+
+
+def show_selected_windows():
+    history_box.delete("1.0","end")
+
+    if selected_student is None:
+        history_box.insert("end","Выберите подключенный компьютер\n")
+        return
+
+    computer_name = students_names.get(selected_student,"получение имени...")
+    ip_address,port = selected_student
+    history_box.insert("end",f"{computer_name} - {ip_address}:{port}\n")
+
+    windows = student_windows.get(selected_student)
+
+    if windows is None:
+        history_box.insert("end","Ожидание списка окон...\n")
+        return
+
+    if not windows:
+        history_box.insert("end","Открытыъ окон не найдено\n")
+        return
+
+    for title in windows:
+        history_box.insert("end",f" • {title}\n")
+
+
+def select_student(choice):
+    global selected_student
+    selected_student = student_choices.get(choice)
+    show_selected_windows()
 
 
 def update_connected_list():
-    connected_box.delete("1.0","end")
-    if not connected_students:
-        connected_box.insert("end","Нет подключенных устройств\n")
-        return
-
+    global selected_student
+    student_choices.clear()
     for address in sorted(connected_students):
         ip_address, port = address
-        computer_name = students_names.get(address,"Получение имени...")
+        computer_name = students_names.get(address, "Получение имени...")
+        label = f"{computer_name} — {ip_address}:{port}"
+        student_choices[label] = address
 
-        line = f"{computer_name} - {ip_address}:{port}\n"
+    if not student_choices:
+        selected_student = None
+        student_menu.configure(values=["Нет подключений"], state="disabled")
+        student_menu.set("Нет подключений")
+        show_selected_windows()
+        return
 
-        connected_box.insert("end",line)
+    student_menu.configure(values=list(student_choices), state="normal")
+
+    if selected_student not in connected_students:
+        selected_student = next(iter(student_choices.values()))
+
+    for label, address in student_choices.items():
+        if address == selected_student:
+            student_menu.set(label)
+            break
+
+    show_selected_windows()
 
 
 def check_student_events():
     try:
-        address,computer_name,window_titles = student_events.get_nowait()
+        address, computer_name, window_titles = student_events.get_nowait()
     except queue.Empty:
         pass
     else:
-        students_names[address] = computer_name
-        update_connected_list()
-        ip_address,port = address
-        student_label.configure(
-            text=f"Последнее обновление: {computer_name} - {ip_address}"
-        )
-
-        history_box.delete("1.0","end")
-        history_box.insert("end",f"{computer_name} - {ip_address}\n")
-
-        for title in window_titles:
-            history_box.insert("end",f" • {title}\n")
-
-    app.after(100,check_student_events)
+        if address in connected_students:
+            students_names[address] = computer_name
+            student_windows[address] = window_titles
+            update_connected_list()
+    app.after(100, check_student_events)
 
 
 def handle_student(connection, address):
@@ -162,7 +199,6 @@ def check_presence_events():
         update_connected_list()
 
     app.after(100,check_presence_events)
-
 
 
 app = ctk.CTk()
