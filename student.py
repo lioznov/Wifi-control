@@ -15,6 +15,7 @@ connection_results = queue.Queue()
 
 
 def show_open_windows():
+    """Вернуть заголовки видимых окон Windows после простой фильтрации."""
     window_titles = []
     user32 = ctypes.windll.user32
 
@@ -32,6 +33,7 @@ def show_open_windows():
     )
 
     def process_window(hwnd, extra_data):
+        """Добавить подходящий заголовок окна; вернуть True для продолжения перебора."""
         if user32.IsWindowVisible(hwnd):
             title_length = user32.GetWindowTextLengthW(hwnd)
 
@@ -58,6 +60,7 @@ def show_open_windows():
 
 
 def print_open_windows():
+    """Вывести в консоль пример JSON с именем компьютера и окнами."""
     titles = show_open_windows()
 
     data = {
@@ -72,6 +75,10 @@ def print_open_windows():
 
 
 def try_connection(ip_address):
+    """Подключиться к преподавателю и отправлять списки окон до ошибки связи.
+
+    ip_address — адрес сервера; результаты передаются в интерфейс через очередь.
+    """
     try:
         with socket.create_connection((ip_address, 50505), timeout=10) as connection:
             connection_results.put(("connected", "Соединение установлено"))
@@ -108,6 +115,7 @@ def try_connection(ip_address):
         connection_results.put(("disconnected", "Не удалось прочитать ответ"))
 
 def check_connection_result():
+    """Показать событие соединения из очереди и запланировать следующую проверку."""
     try:
         event_type, message = connection_results.get_nowait()
     except queue.Empty:
@@ -122,6 +130,7 @@ def check_connection_result():
 
 
 def connect_to_teacher():
+    """Проверить введённые данные и запустить подключение в фоновом потоке."""
     ip_address = ip_entry.get().strip()
     access_code = code_entry.get()
 

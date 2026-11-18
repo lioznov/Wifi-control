@@ -20,6 +20,7 @@ selected_student = None
 
 
 def show_selected_windows():
+    """Показать последний список окон выбранного подключения."""
     history_box.delete("1.0","end")
 
     if selected_student is None:
@@ -45,12 +46,14 @@ def show_selected_windows():
 
 
 def select_student(choice):
+    """Выбрать подключение по надписи из меню и показать его окна."""
     global selected_student
     selected_student = student_choices.get(choice)
     show_selected_windows()
 
 
 def update_connected_list():
+    """Обновить меню подключений, сохранив выбор, если он ещё доступен."""
     global selected_student
     student_choices.clear()
     for address in sorted(connected_students):
@@ -80,6 +83,7 @@ def update_connected_list():
 
 
 def check_student_events():
+    """Обработать одно обновление окон из очереди и запланировать следующую проверку."""
     try:
         address, computer_name, window_titles = student_events.get_nowait()
     except queue.Empty:
@@ -93,6 +97,11 @@ def check_student_events():
 
 
 def handle_student(connection, address):
+    """Обрабатывать сообщения одного клиента до отключения или ошибки.
+
+    connection — сокет клиента; address — кортеж его IP-адреса и порта.
+    Данные интерфейса передаются в основной поток через очереди.
+    """
     print("Подключился компьютер:", address)
     presence_events.put(("connected",address))
 
@@ -149,6 +158,7 @@ def handle_student(connection, address):
 
 
 def wait_for_students():
+    """Принимать локальные TCP-подключения и запускать поток для каждого клиента."""
     try:
         with sc.socket(sc.AF_INET,sc.SOCK_STREAM) as server_socket:
             server_socket.bind(("127.0.0.1",50505))
@@ -170,6 +180,7 @@ def wait_for_students():
 
 
 def start_server():
+    """Проверить длину кода и запустить сервер в фоновом потоке."""
     access_code = code_entry.get()
 
     if access_code == "":
@@ -188,6 +199,7 @@ def start_server():
 
 
 def check_presence_events():
+    """Обработать событие подключения или отключения и обновить меню."""
     try:
         event_type, address = presence_events.get_nowait()
     except queue.Empty:
