@@ -3,6 +3,9 @@ import socket as sc
 import threading
 import json
 from ipaddress import ip_address
+import hashlib
+import hmac
+import secrets
 
 import customtkinter as ctk
 
@@ -17,6 +20,21 @@ student_windows = {}
 student_choices = {}
 
 selected_student = None
+
+
+def create_proof(access_code,message):
+    key_bytes = access_code.encode("utf-8")
+    message_bytes = message.encode("utf-8")
+
+    result = hmac.new(
+        key_bytes,
+        message_bytes,
+        hashlib.sha256
+    )
+
+    proof = result.hexdigest()
+
+    return proof
 
 
 def show_selected_windows():
@@ -96,7 +114,7 @@ def check_student_events():
     app.after(100, check_student_events)
 
 
-def handle_student(connection, address):
+def handle_student(connection, address,access_code):
     """Обрабатывать сообщения одного клиента до отключения или ошибки.
 
     connection — сокет клиента; address — кортеж его IP-адреса и порта.
@@ -157,7 +175,7 @@ def handle_student(connection, address):
         print("Соединение закрыто:",address)
 
 
-def wait_for_students():
+def wait_for_students(access_code):
     """Принимать локальные TCP-подключения и запускать поток для каждого клиента."""
     try:
         with sc.socket(sc.AF_INET,sc.SOCK_STREAM) as server_socket:
@@ -169,7 +187,7 @@ def wait_for_students():
                 connection, address = server_socket.accept()
                 student_thread = threading.Thread(
                     target=handle_student,
-                    args=(connection,address),
+                    args=(connection,address,access_code),
                     daemon=True
                 )
 
@@ -180,7 +198,6 @@ def wait_for_students():
 
 
 def start_server():
-    """Проверить длину кода и запустить сервер в фоновом потоке."""
     access_code = code_entry.get()
 
     if access_code == "":
@@ -190,6 +207,7 @@ def start_server():
     else:
         server_thread = threading.Thread(
             target = wait_for_students,
+            args=(access_code,),
             daemon=True
         )
         server_thread.start()
@@ -199,7 +217,6 @@ def start_server():
 
 
 def check_presence_events():
-    """Обработать событие подключения или отключения и обновить меню."""
     try:
         event_type, address = presence_events.get_nowait()
     except queue.Empty:
@@ -290,6 +307,12 @@ start_button = ctk.CTkButton(
     command=start_server
 )
 start_button.pack(pady=10)
+
+test_code = "мой-длинный-код-123"  # Учебный пример, не настоящий код класса.
+test_message = "проверка"          # Одинаковый текст для обеих программ.
+
+print(create_proof(test_code, test_message))
+# Выводим результат в консоль PyCharm.
 
 app.after(100,check_student_events)
 app.after(100,check_presence_events)

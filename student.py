@@ -5,6 +5,8 @@ import ctypes
 import json
 from ctypes import wintypes
 import time
+import hashlib
+import hmac
 
 import customtkinter as ctk
 
@@ -12,6 +14,21 @@ ctk.set_appearance_mode("dark")
 
 
 connection_results = queue.Queue()
+
+
+def create_proof(access_code,message):
+    key_bytes = access_code.encode("utf-8")
+    message_bytes = message.encode("utf-8")
+
+    result = hmac.new(
+        key_bytes,
+        message_bytes,
+        hashlib.sha256
+    )
+
+    proof = result.hexdigest()
+
+    return proof
 
 
 def show_open_windows():
@@ -74,7 +91,7 @@ def print_open_windows():
     print(json_text)
 
 
-def try_connection(ip_address):
+def try_connection(ip_address,access_code):
     """Подключиться к преподавателю и отправлять списки окон до ошибки связи.
 
     ip_address — адрес сервера; результаты передаются в интерфейс через очередь.
@@ -146,7 +163,7 @@ def connect_to_teacher():
 
         connection_thread= threading.Thread(
             target=try_connection,
-            args=(ip_address,),
+            args=(ip_address,access_code),
             daemon = True
         )
 
@@ -195,6 +212,13 @@ status_label = ctk.CTkLabel(
     text="Нет подключения"
 )
 status_label.pack(pady=20)
+
+test_code = "мой-длинный-код-123"  # Учебный пример, не настоящий код класса.
+test_message = "проверка"          # Одинаковый текст для обеих программ.
+
+print(create_proof(test_code, test_message))
+# Выводим результат в консоль PyCharm.
+
 
 app.after(200, print_open_windows)
 app.after(100, check_connection_result)
