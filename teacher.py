@@ -2,6 +2,7 @@ import queue
 import socket as sc
 import threading
 import json
+from ipaddress import ip_address
 
 import customtkinter as ctk
 
@@ -10,28 +11,44 @@ ctk.set_appearance_mode("dark")
 student_events = queue.Queue()
 presence_events = queue.Queue()
 connected_students = set()
+students_names = {}
+
+
+def update_connected_list():
+    connected_box.delete("1.0","end")
+    if not connected_students:
+        connected_box.insert("end","Нет подключенных устройств\n")
+        return
+
+    for address in sorted(connected_students):
+        ip_address, port = address
+        computer_name = students_names.get(address,"Получение имени...")
+
+        line = f"{computer_name} - {ip_address}:{port}\n"
+
+        connected_box.insert("end",line)
+
 
 def check_student_events():
     try:
-        address, computer_name, window_titles = student_events.get_nowait()
+        address,computer_name,window_titles = student_events.get_nowait()
     except queue.Empty:
         pass
     else:
-        ip_address, port = address
-
+        students_names[address] = computer_name
+        update_connected_list()
+        ip_address,port = address
         student_label.configure(
-            text=f"Последнее подключение: {computer_name} — {ip_address}"
+            text=f"Последнее обновление: {computer_name} - {ip_address}"
         )
 
-        record = f"{computer_name} — {ip_address}\n"
-        history_box.insert("end", record)
+        history_box.delete("1.0","end")
+        history_box.insert("end",f"{computer_name} - {ip_address}\n")
 
         for title in window_titles:
-            history_box.insert("end", f"  • {title}\n")
+            history_box.insert("end",f" • {title}\n")
 
-        history_box.insert("end", "\n")
-
-    app.after(100, check_student_events)
+    app.after(100,check_student_events)
 
 
 def handle_student(connection, address):
@@ -131,22 +148,18 @@ def start_server():
 
 def check_presence_events():
     try:
-        event_type, address = presence_events.get_nowait()
+        event_type,address = presence_events.get_nowait()
     except queue.Empty:
         pass
     else:
         if event_type == "connected":
             connected_students.add(address)
+
         elif event_type == "disconnected":
             connected_students.discard(address)
-        connected_box.delete("1.0","end")
+            students_names.pop(address,None)
 
-        if not connected_students:
-            connected_box.insert("end","Нет подключенных устройств")
-
-        else:
-            for ip_address,port in sorted(connected_students):
-                connected_box.insert("end",f"{ip_address}:{port}\n")
+        update_connected_list()
 
     app.after(100,check_presence_events)
 
@@ -226,6 +239,6 @@ start_button = ctk.CTkButton(
 )
 start_button.pack(pady=10)
 
-app.after(100, check_student_events)
+app.after(100,check_student_events)
 app.after(100,check_presence_events)
 app.mainloop()
