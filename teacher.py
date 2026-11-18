@@ -12,6 +12,10 @@ student_events = queue.Queue()
 presence_events = queue.Queue()
 connected_students = set()
 students_names = {}
+
+student_windows = {}
+student_choices = {}
+
 selected_student = None
 
 
