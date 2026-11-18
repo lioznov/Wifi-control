@@ -185,20 +185,18 @@ def start_server():
 
 def check_presence_events():
     try:
-        event_type,address = presence_events.get_nowait()
+        event_type, address = presence_events.get_nowait()
     except queue.Empty:
         pass
     else:
         if event_type == "connected":
             connected_students.add(address)
-
         elif event_type == "disconnected":
             connected_students.discard(address)
-            students_names.pop(address,None)
-
+            students_names.pop(address, None)
+            student_windows.pop(address, None)
         update_connected_list()
-
-    app.after(100,check_presence_events)
+    app.after(100, check_presence_events)
 
 
 app = ctk.CTk()
@@ -235,14 +233,16 @@ connected_label = ctk.CTkLabel(
 connected_label.pack(pady=(10,5))
 
 
-connected_box = ctk.CTkTextbox(
-    master=app,
-    width=400,
-    height=80
+student_menu = ctk.CTkOptionMenu(
+    master=app,                      # Меню находится в окне преподавателя.
+    values=["Нет подключений"],      # Начальный пункт до подключения учеников.
+    command=select_student,          # Функция вызовется при выборе пункта.
+    width=400,                       # Ширина меню.
+    state="disabled"                 # Пока учеников нет, меню отключено.
 )
-connected_box.pack(pady=5)
 
-connected_box.insert("end","Нет подключенных устройств\n")
+student_menu.pack(pady=5)             # Размещаем меню в окне.
+student_menu.set("Нет подключений")   # Показываем начальную надпись.
 
 
 history_label = ctk.CTkLabel(
