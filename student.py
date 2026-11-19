@@ -7,6 +7,7 @@ from ctypes import wintypes
 import time
 import hashlib
 import hmac
+import os
 
 import customtkinter as ctk
 
@@ -29,6 +30,21 @@ def create_proof(access_code,message):
     proof = result.hexdigest()
 
     return proof
+
+
+def authenticate_teacher(connection, incoming, access_code):
+    challenge_bytes = incoming.readline(66)
+    if len(challenge_bytes) != 65 or not challenge_bytes.endswith(b"\n"):
+        raise ValueError("Получена неверная строка проверки")
+    challenge = challenge_bytes[:-1].decode("ascii")
+    student_proof = create_proof(access_code, "student:" + challenge)
+    connection.sendall((student_proof + "\n").encode("ascii"))
+    teacher_proof_bytes = incoming.readline(66)
+    expected_proof = create_proof(access_code, "teacher:" + challenge)
+    expected_bytes = (expected_proof + "\n").encode("ascii")
+
+    if not hmac.compare_digest(teacher_proof_bytes, expected_bytes):
+        raise ValueError("Не удалось подтвердить код доступа")
 
 
 def show_open_windows():
@@ -98,9 +114,9 @@ def try_connection(ip_address,access_code):
     """
     try:
         with socket.create_connection((ip_address, 50505), timeout=10) as connection:
-            connection_results.put(("connected", "Соединение установлено"))
-
             with connection.makefile("rb") as incoming:
+                authenticate_teacher(connection, incoming, access_code)
+                connection_results.put(("connected", "Код подтверждён. Соединение установлено"))
                 while True:
                     computer_name = socket.gethostname()
                     window_titles = show_open_windows()
@@ -130,6 +146,9 @@ def try_connection(ip_address,access_code):
 
     except UnicodeDecodeError:
         connection_results.put(("disconnected", "Не удалось прочитать ответ"))
+
+    except ValueError as error:
+        connection_results.put(("disconnected", str(error)))
 
 def check_connection_result():
     """Показать событие соединения из очереди и запланировать следующую проверку."""
@@ -212,12 +231,6 @@ status_label = ctk.CTkLabel(
     text="Нет подключения"
 )
 status_label.pack(pady=20)
-
-test_code = "мой-длинный-код-123"  # Учебный пример, не настоящий код класса.
-test_message = "проверка"          # Одинаковый текст для обеих программ.
-
-print(create_proof(test_code, test_message))
-# Выводим результат в консоль PyCharm.
 
 
 app.after(200, print_open_windows)

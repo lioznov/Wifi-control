@@ -6,6 +6,7 @@ from ipaddress import ip_address
 import hashlib
 import hmac
 import secrets
+from wsgiref.util import request_uri
 
 import customtkinter as ctk
 
@@ -35,6 +36,26 @@ def create_proof(access_code,message):
     proof = result.hexdigest()
 
     return proof
+
+
+def authenticate_student(connection, incoming, access_code):
+    challenge = secrets.token_hex(32)
+
+    connection.sendall((challenge + "\n").encode("ascii"))
+
+    student_proof_bytes = incoming.readline(66)
+
+    expected_proof = create_proof(access_code,"student:"+challenge)
+    expected_bytes = (expected_proof + "\n").encode("ascii")
+
+    if not hmac.compare_digest(student_proof_bytes,expected_bytes):
+        return False
+
+    teacher_proof = create_proof(access_code,"teacher:" + challenge)
+
+    connection.sendall((teacher_proof + "\n").encode("ascii"))
+
+    return True
 
 
 def show_selected_windows():
@@ -121,11 +142,16 @@ def handle_student(connection, address,access_code):
     Данные интерфейса передаются в основной поток через очереди.
     """
     print("Подключился компьютер:", address)
-    presence_events.put(("connected",address))
+    authenticated = False
 
     try:
         connection.settimeout(10)
         with connection.makefile("rb") as incoming:
+            if not authenticate_student(connection, incoming, access_code):
+                print("Неверный код доступа:",address)
+                return
+            authenticated = True
+            presence_events.put(("connected",address))
             while True:
                 message_bytes = incoming.readline(65537)
 
@@ -171,7 +197,8 @@ def handle_student(connection, address,access_code):
         print("Ошибка при обмене с учеником:",address,error)
     finally:
         connection.close()
-        presence_events.put(("disconnected",address))
+        if authenticated:
+            presence_events.put(("disconnected",address))
         print("Соединение закрыто:",address)
 
 
@@ -308,11 +335,6 @@ start_button = ctk.CTkButton(
 )
 start_button.pack(pady=10)
 
-test_code = "мой-длинный-код-123"  # Учебный пример, не настоящий код класса.
-test_message = "проверка"          # Одинаковый текст для обеих программ.
-
-print(create_proof(test_code, test_message))
-# Выводим результат в консоль PyCharm.
 
 app.after(100,check_student_events)
 app.after(100,check_presence_events)
