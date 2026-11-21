@@ -6,6 +6,7 @@ from ipaddress import ip_address
 import hashlib
 import hmac
 import secrets
+from tkinter import messagebox, ttk
 from wsgiref.util import request_uri
 
 import customtkinter as ctk
@@ -13,6 +14,8 @@ import customtkinter as ctk
 ctk.set_appearance_mode("dark")
 
 student_events = queue.Queue()
+server_events = queue.Queue()
+SERVER_PORT = 47473
 presence_events = queue.Queue()
 connected_students = set()
 students_names = {}
@@ -22,6 +25,11 @@ student_choices = {}
 
 selected_student = None
 
+window_choices = {}
+selected_window = None
+command_queues = {}
+command_lock = threading.Lock()
+command_results = queue.Queue()
 
 def create_proof(access_code,message):
     key_bytes = access_code.encode("utf-8")
@@ -58,66 +66,101 @@ def authenticate_student(connection, incoming, access_code):
     return True
 
 
-def show_selected_windows():
-    """Показать последний список окон выбранного подключения."""
-    history_box.delete("1.0","end")
+def select_window(event=None):
+    """Запомнить выбранное окно из постоянно видимого списка."""
+    global selected_window
+    selection = windows_tree.selection()
+    selected_window = window_choices.get(selection[0]) if selection else None
+    if selected_window:
+        action_status.configure(text=f"Выбрано: {selected_window['title']}")
+    close_button.configure(state="normal" if selected_window else "disabled")
+        # ...пока выводим его данные в консоль для проверки.
 
+
+
+def update_window_menu():
+    """Обновить только изменившиеся строки, сохранив выбор и прокрутку."""
+    global selected_window
+    windows = student_windows.get(selected_student, [])
+    new_choices = {}
+    for window in windows:
+        title = window.get("title")
+        handle, pid = window.get("handle"), window.get("pid")
+        if isinstance(title, str) and type(handle) is int and type(pid) is int:
+            row_id = f"{handle}:{pid}"
+            new_choices[row_id] = window
+
+    old_selection = windows_tree.selection()
+    for row_id in windows_tree.get_children():
+        if row_id not in new_choices:
+            windows_tree.delete(row_id)
+    for row_id, window in new_choices.items():
+        if windows_tree.exists(row_id):
+            if windows_tree.item(row_id, "text") != window["title"]:
+                windows_tree.item(row_id, text=window["title"])
+        else:
+            windows_tree.insert("", "end", iid=row_id, text=window["title"])
+
+    window_choices.clear()
+    window_choices.update(new_choices)
+    selected_window = window_choices.get(old_selection[0]) if old_selection else None
+    close_button.configure(state="normal" if selected_window else "disabled")
+    count = len(new_choices)
     if selected_student is None:
-        history_box.insert("end","Выберите подключенный компьютер\n")
-        return
+        windows_caption.configure(text="Выберите компьютер")
+    elif selected_student not in student_windows:
+        windows_caption.configure(text="Ожидание списка окон…")
+    else:
+        windows_caption.configure(text=f"Открытых окон: {count}. Выберите строку для закрытия.")
+        # ...просим преподавателя сделать выбор.
 
-    computer_name = students_names.get(selected_student,"получение имени...")
-    ip_address,port = selected_student
-    history_box.insert("end",f"{computer_name} - {ip_address}:{port}\n")
 
-    windows = student_windows.get(selected_student)
 
-    if windows is None:
-        history_box.insert("end","Ожидание списка окон...\n")
-        return
 
-    if not windows:
-        history_box.insert("end","Открытыъ окон не найдено\n")
-        return
-
-    for title in windows:
-        history_box.insert("end",f" • {title}\n")
+def show_selected_windows():
+    """Обновить список окон выбранного подключения."""
+    update_window_menu()
+        # Показываем преподавателю только заголовок.
 
 
 def select_student(choice):
-    """Выбрать подключение по надписи из меню и показать его окна."""
-    global selected_student
-    selected_student = student_choices.get(choice)
+    """Переключить компьютер и сбросить выбор окна прежнего ученика."""
+    global selected_student, selected_window
+    address = student_choices.get(choice)
+    if address != selected_student:
+        selected_student = address
+        selected_window = None
+        windows_tree.selection_remove(*windows_tree.selection())
+        action_status.configure(text="Выберите окно в списке")
     show_selected_windows()
 
 
 def update_connected_list():
-    """Обновить меню подключений, сохранив выбор, если он ещё доступен."""
-    global selected_student
-    student_choices.clear()
+    """Обновить меню компьютеров, только когда варианты изменились."""
+    global selected_student, selected_window
+    old_student = selected_student
+    choices = {}
     for address in sorted(connected_students):
         ip_address, port = address
-        computer_name = students_names.get(address, "Получение имени...")
-        label = f"{computer_name} — {ip_address}:{port}"
-        student_choices[label] = address
-
-    if not student_choices:
+        name = students_names.get(address, "Получение имени…")
+        choices[f"{name} — {ip_address}:{port}"] = address
+    student_choices.clear()
+    student_choices.update(choices)
+    values = list(choices) or ["Нет подключений"]
+    if student_menu.cget("values") != values:
+        student_menu.configure(values=values)
+    student_menu.configure(state="normal" if choices else "disabled")
+    if not choices:
         selected_student = None
-        student_menu.configure(values=["Нет подключений"], state="disabled")
-        student_menu.set("Нет подключений")
-        show_selected_windows()
-        return
-
-    student_menu.configure(values=list(student_choices), state="normal")
-
-    if selected_student not in connected_students:
-        selected_student = next(iter(student_choices.values()))
-
-    for label, address in student_choices.items():
-        if address == selected_student:
-            student_menu.set(label)
-            break
-
+    elif selected_student not in connected_students:
+        selected_student = next(iter(choices.values()))
+    if selected_student != old_student:
+        selected_window = None
+        windows_tree.selection_remove(*windows_tree.selection())
+    label = next((label for label, address in choices.items() if address == selected_student), "Нет подключений")
+    if student_menu.get() != label:
+        student_menu.set(label)
+    connection_count.configure(text=f"Подключено: {len(choices)}")
     show_selected_windows()
 
 
@@ -143,6 +186,7 @@ def handle_student(connection, address,access_code):
     """
     print("Подключился компьютер:", address)
     authenticated = False
+    commands = queue.Queue(maxsize=1)
 
     try:
         connection.settimeout(10)
@@ -151,6 +195,8 @@ def handle_student(connection, address,access_code):
                 print("Неверный код доступа:",address)
                 return
             authenticated = True
+            with command_lock:
+                command_queues[address] = commands
             presence_events.put(("connected",address))
             while True:
                 message_bytes = incoming.readline(65537)
@@ -185,12 +231,24 @@ def handle_student(connection, address,access_code):
                     print("не получен списко окон:",address)
                     break
 
-                if not all(isinstance(title,str) for title in window_titles):
-                    print("Список окон содержит неверные данные:",address)
+                if not all(isinstance(window, dict) for window in window_titles):
+                    # Проверяем, что каждый элемент списка является словарём.
+
+                    print("Список окон содержит неверные данные:", address)
+                    # Сообщаем об ошибке в консоль.
+
                     break
+                    # Прекращаем обработку этого подключения.
 
                 student_events.put((address, computer_name, window_titles))
-                reply = "Список получен\n"
+                result = data.get("close_result")
+                if isinstance(result, str) and len(result) <= 500:
+                    command_results.put((address, result))
+                try:
+                    command = commands.get_nowait()
+                except queue.Empty:
+                    command = {"action": "wait"}
+                reply = json.dumps(command, ensure_ascii=False) + "\n"
                 connection.sendall(reply.encode("utf-8"))
 
     except (OSError,UnicodeDecodeError,json.JSONDecodeError) as error:
@@ -198,6 +256,8 @@ def handle_student(connection, address,access_code):
     finally:
         connection.close()
         if authenticated:
+            with command_lock:
+                command_queues.pop(address, None)
             presence_events.put(("disconnected",address))
         print("Соединение закрыто:",address)
 
@@ -206,8 +266,9 @@ def wait_for_students(access_code):
     """Принимать локальные TCP-подключения и запускать поток для каждого клиента."""
     try:
         with sc.socket(sc.AF_INET,sc.SOCK_STREAM) as server_socket:
-            server_socket.bind(("127.0.0.1",50505))
+            server_socket.bind(("127.0.0.1", SERVER_PORT))
             server_socket.listen()
+            server_events.put(("started", f"Сервер запущен · порт {SERVER_PORT}"))
             print("Сервер ожидает подключения...")
 
             while True:
@@ -222,6 +283,7 @@ def wait_for_students(access_code):
 
     except  OSError as error:
         print("Ошибка сервера:",error)
+        server_events.put(("error", f"Не удалось запустить сервер: {error}"))
 
 
 def start_server():
@@ -237,10 +299,22 @@ def start_server():
             args=(access_code,),
             daemon=True
         )
-        server_thread.start()
-
         status_label.configure(text="Сервер запускается - проверьте консоль")
         start_button.configure(state="disabled")
+        server_thread.start()
+
+
+def check_server_events():
+    """Показать результат запуска сервера и разрешить повтор при ошибке."""
+    try:
+        event_type, message = server_events.get_nowait()
+    except queue.Empty:
+        pass
+    else:
+        status_label.configure(text=message)
+        if event_type == "error":
+            start_button.configure(state="normal")
+    app.after(100, check_server_events)
 
 
 def check_presence_events():
@@ -259,83 +333,113 @@ def check_presence_events():
     app.after(100, check_presence_events)
 
 
+def request_selected_close():
+    """Поставить запрос для выбранного ученика после подтверждения."""
+    if selected_student not in connected_students or selected_window is None:
+        messagebox.showinfo("Закрытие окна", "Сначала выберите компьютер и окно.")
+        return
+    address = selected_student
+    window = selected_window.copy()
+    if window not in student_windows.get(address, []):
+        messagebox.showwarning("Закрытие окна", "Список изменился. Выберите окно ещё раз.")
+        return
+    title = window.get("title", "Окно")
+    if not messagebox.askyesno("Закрыть окно", f"Отправить запрос на закрытие окна «{title}»?"):
+        return
+    if address not in connected_students or window not in student_windows.get(address, []):
+        messagebox.showwarning("Закрытие окна", "Компьютер или окно больше недоступны.")
+        return
+    command = {"action": "close", "handle": window.get("handle"),
+               "pid": window.get("pid"), "title": title}
+    with command_lock:
+        commands = command_queues.get(address)
+        if commands is None:
+            messagebox.showwarning("Закрытие окна", "Компьютер уже отключился.")
+            return
+        try:
+            commands.put_nowait(command)
+        except queue.Full:
+            messagebox.showinfo("Закрытие окна", "Предыдущий запрос ещё ожидает отправки.")
+            return
+    action_status.configure(text="Запрос ожидает отправки выбранному компьютеру")
+
+
+def check_command_results():
+    """Показать результат выполнения запроса из очереди интерфейса."""
+    try:
+        address, result = command_results.get_nowait()
+    except queue.Empty:
+        pass
+    else:
+        action_status.configure(text=f"{address[0]}:{address[1]} — {result}")
+    app.after(100, check_command_results)
+
+
 app = ctk.CTk()
+app.title("Класс — панель преподавателя")
+app.geometry("920x740")
+app.minsize(650, 620)
+app.configure(fg_color="#101720")
 
+style = ttk.Style(app)
+style.theme_use("clam")
+style.configure("Classroom.Treeview", background="#1c2937", fieldbackground="#1c2937",
+                foreground="#eff5fa", borderwidth=0, rowheight=36, font=("Segoe UI", 11))
+style.map("Classroom.Treeview", background=[("selected", "#2c6f9e")], foreground=[("selected", "white")])
 
-app.title("Панель преподователя")
-app.geometry("700x700")
+content = ctk.CTkFrame(app, fg_color="transparent")
+content.pack(fill="both", expand=True, padx=28, pady=24)
+ctk.CTkLabel(content, text="Панель преподавателя", font=ctk.CTkFont(size=25, weight="bold"),
+             anchor="w").pack(fill="x")
+ctk.CTkLabel(content, text="Подключения и открытые окна класса", text_color="#a8b9c8", anchor="w").pack(fill="x", pady=(2, 16))
 
+server_card = ctk.CTkFrame(content, fg_color="#192532", corner_radius=12)
+server_card.pack(fill="x", pady=(0, 12))
+ctk.CTkLabel(server_card, text="1  •  Сервер", font=ctk.CTkFont(size=16, weight="bold"), anchor="w").pack(fill="x", padx=18, pady=(12, 3))
+server_row = ctk.CTkFrame(server_card, fg_color="transparent")
+server_row.pack(fill="x", padx=18, pady=(4, 4))
+code_entry = ctk.CTkEntry(server_row, placeholder_text="Код доступа (не менее 12 символов)", show="*", height=36)
+code_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+start_button = ctk.CTkButton(server_row, text="Запустить сервер", command=start_server, height=36)
+start_button.pack(side="left")
+status_label = ctk.CTkLabel(server_card, text="Сервер не запущен", text_color="#a8b9c8", anchor="w")
+status_label.pack(fill="x", padx=18, pady=(0, 10))
 
-title_label = ctk.CTkLabel(
-    master=app,
-    text="Управление компьютерным классом"
-)
-title_label.pack(pady=20)
+student_card = ctk.CTkFrame(content, fg_color="#192532", corner_radius=12)
+student_card.pack(fill="x", pady=(0, 12))
+student_header = ctk.CTkFrame(student_card, fg_color="transparent")
+student_header.pack(fill="x", padx=18, pady=(10, 4))
+ctk.CTkLabel(student_header, text="2  •  Компьютер", font=ctk.CTkFont(size=16, weight="bold")).pack(side="left")
+connection_count = ctk.CTkLabel(student_header, text="Подключено: 0", text_color="#a8b9c8")
+connection_count.pack(side="right")
+student_menu = ctk.CTkOptionMenu(student_card, values=["Нет подключений"], command=select_student,
+                                 state="disabled", height=36)
+student_menu.pack(fill="x", padx=18, pady=(3, 14))
+student_menu.set("Нет подключений")
 
+window_card = ctk.CTkFrame(content, fg_color="#192532", corner_radius=12)
+window_card.pack(fill="both", expand=True)
+ctk.CTkLabel(window_card, text="3  •  Открытые окна", font=ctk.CTkFont(size=16, weight="bold"), anchor="w").pack(fill="x", padx=18, pady=(12, 0))
+windows_caption = ctk.CTkLabel(window_card, text="Выберите компьютер", text_color="#a8b9c8", anchor="w")
+windows_caption.pack(fill="x", padx=18, pady=(0, 8))
+list_frame = ctk.CTkFrame(window_card, fg_color="transparent")
+windows_tree = ttk.Treeview(list_frame, show="tree", selectmode="browse", style="Classroom.Treeview")
+scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=windows_tree.yview)
+windows_tree.configure(yscrollcommand=scrollbar.set)
+scrollbar.pack(side="right", fill="y")
+windows_tree.pack(side="left", fill="both", expand=True)
+windows_tree.bind("<<TreeviewSelect>>", select_window)
+action_row = ctk.CTkFrame(window_card, fg_color="transparent")
+close_button = ctk.CTkButton(action_row, text="Закрыть выбранное окно", command=request_selected_close,
+                             state="disabled", fg_color="#ac3e47", hover_color="#8e3038", height=36)
+close_button.pack(side="left")
+action_status = ctk.CTkLabel(window_card, text="Выберите окно в списке", text_color="#a8b9c8", anchor="w", wraplength=600)
+action_status.pack(side="bottom", fill="x", padx=18, pady=(0, 12))
+action_row.pack(side="bottom", fill="x", padx=18, pady=(12, 4))
+list_frame.pack(fill="both", expand=True, padx=18)
 
-status_label = ctk.CTkLabel(
-    master=app,
-    text="Сервер не запущен"
-)
-status_label.pack(pady=10)
-
-student_label = ctk.CTkLabel(
-    master=app,
-    text="Подключений еще не было"
-)
-student_label.pack(pady=10)
-
-
-connected_label = ctk.CTkLabel(
-    master=app,
-    text="Активные подключения"
-)
-connected_label.pack(pady=(10,5))
-
-
-student_menu = ctk.CTkOptionMenu(
-    master=app,                      # Меню находится в окне преподавателя.
-    values=["Нет подключений"],      # Начальный пункт до подключения учеников.
-    command=select_student,          # Функция вызовется при выборе пункта.
-    width=400,                       # Ширина меню.
-    state="disabled"                 # Пока учеников нет, меню отключено.
-)
-
-student_menu.pack(pady=5)             # Размещаем меню в окне.
-student_menu.set("Нет подключений")   # Показываем начальную надпись.
-
-
-history_label = ctk.CTkLabel(
-    master=app,
-    text="История подключений"
-)
-history_label.pack(pady=(15,5))
-
-history_box = ctk.CTkTextbox(
-    master=app,
-    width=400,
-    height=150
-)
-history_box.pack(pady=5)
-
-
-code_entry = ctk.CTkEntry(
-    master=app,
-    placeholder_text="Придумайте код доступа",
-    show="*",
-    width=250
-)
-code_entry.pack(pady=10)
-
-
-start_button = ctk.CTkButton(
-    master=app,
-    text="Запустить сервер",
-    command=start_server
-)
-start_button.pack(pady=10)
-
-
-app.after(100,check_student_events)
-app.after(100,check_presence_events)
+app.after(100, check_student_events)
+app.after(100, check_presence_events)
+app.after(100, check_command_results)
+app.after(100, check_server_events)
 app.mainloop()
